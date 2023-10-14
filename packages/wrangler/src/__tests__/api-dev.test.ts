@@ -1,11 +1,49 @@
 import * as fs from "node:fs";
 import { Request } from "undici";
 import { unstable_dev } from "../api";
+import * as WranlgerDevModule from "../dev";
 import { runInTempDir } from "./helpers/run-in-tmp";
 
+jest.mock("../dev", () => {
+	const originalModule = jest.requireActual("../dev");
+	return {
+		_esModule: true,
+		...originalModule,
+		startDev: jest.fn().mockImplementation(async (...args) => {
+			args[0].onReady(9000, 25565);
+		return originalModule.startDev(...args);
+		}),
+		startApiDev: jest.fn().mockImplementation(async (...args) => {
+		return originalModule.startApiDev(...args);
+		}),
+		test: jest.fn(),
+	};
+});
+
+jest.unmock("child_process");
 jest.unmock("undici");
 
 describe("unstable_dev", () => {
+  it("should call startApiDev in testMode", async () => {
+		const startApiDevSpy = jest.spyOn(WranlgerDevModule, 'startApiDev');
+
+		await unstable_dev("src/__tests__/helpers/worker-scripts/hello-world-worker.js");
+
+		expect(startApiDevSpy).toHaveBeenCalled();
+	});
+
+  it("should call startDev", async () => {
+		const startDevSpy = jest.spyOn(WranlgerDevModule, 'startDev');
+
+		await unstable_dev("src/__tests__/helpers/worker-scripts/hello-world-worker.js", {
+			experimental: {
+				testMode: false,
+			}
+		});
+
+		expect(startDevSpy).toHaveBeenCalled();
+	});
+
 	it("should return Hello World", async () => {
 		const worker = await unstable_dev(
 			"src/__tests__/helpers/worker-scripts/hello-world-worker.js",
@@ -42,14 +80,13 @@ describe("unstable_dev", () => {
 		const worker = await unstable_dev(
 			"src/__tests__/helpers/worker-scripts/hello-world-worker.js",
 			{
-				port: 9191,
 				experimental: {
 					disableExperimentalWarning: true,
 					disableDevRegistry: true,
 				},
 			}
 		);
-		expect(worker.port).toBe(9191);
+		expect(worker.port).not.toBe(0);
 		await worker.stop();
 	});
 });
@@ -113,15 +150,13 @@ describe("unstable dev fetch input parsing", () => {
 	};
 	`;
 		fs.writeFileSync("index.js", scriptContent);
-		const port = 21213;
 		const worker = await unstable_dev("index.js", {
-			port,
 			experimental: {
 				disableExperimentalWarning: true,
 				disableDevRegistry: true,
 			},
 		});
-		const req = new Request("http://0.0.0.0:21213/test", {
+		const req = new Request(`http://127.0.0.1:${worker.port}/test`, {
 			method: "POST",
 		});
 		const resp = await worker.fetch(req);
